@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
 import subprocess
 import time
 from abc import ABC, abstractmethod
+
+import aiohttp
 
 KEY_PATTERN = re.compile(r"\b[a-f0-9]{32}\.[A-Za-z0-9]{8,64}\b")
 
@@ -46,6 +49,50 @@ def github_api_headers(token: str, accept: str = "application/vnd.github+json") 
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+class RateLimiter:
+    """Header-aware GitHub rate-limit gate. Optionally persists the block
+    window via a StateStore so a restarted run honors an in-flight limit."""
+
+    def __init__(self, resource: str = "github_search", store=None, max_wait: float = 900.0):
+        self.resource = resource
+        self._store = store
+        self._max_wait = max_wait
+        self._blocked_until = 0.0
+        if store is not None:
+            persisted = store.get_block_until(resource)
+            if persisted:
+                self._blocked_until = persisted
+
+    @staticmethod
+    def compute_block_until(status: int, headers, now: float) -> float:
+        retry_after = headers.get("Retry-After")
+        if retry_after is not None:
+            try:
+                return now + float(retry_after)
+            except ValueError:
+                pass
+        if headers.get("X-RateLimit-Remaining") == "0" and headers.get("X-RateLimit-Reset"):
+            try:
+                return float(headers["X-RateLimit-Reset"])
+            except ValueError:
+                pass
+        if status in (403, 429):
+            return now + 60.0
+        return 0.0
+
+    def note_response(self, status: int, headers) -> None:
+        block = self.compute_block_until(status, headers, time.time())
+        if block > self._blocked_until:
+            self._blocked_until = block
+            if self._store is not None:
+                self._store.set_block_until(self.resource, block)
+
+    async def wait_if_blocked(self) -> None:
+        delay = self._blocked_until - time.time()
+        if delay > 0:
+            await asyncio.sleep(min(delay, self._max_wait))
 
 
 BAD_PATTERNS = [
@@ -115,11 +162,13 @@ class BaseScanner(ABC):
         timeout: int = 15,
         extra_bad_patterns: list[str] | None = None,
         session=None,
+        rate_limiter: "RateLimiter | None" = None,
     ):
         self.concurrency = concurrency
         self.timeout = timeout
         self.extra_bad = extra_bad_patterns or []
         self._session = session
+        self._rate_limiter = rate_limiter
         self._stop_requested = False
         self.results: list[dict] = []
 
@@ -152,3 +201,26 @@ class BaseScanner(ABC):
                 "url": url,
             }
         )
+
+    async def _rl_get_items(self, session, url: str) -> list[dict]:
+        """Rate-limit-aware GET of a GitHub /search endpoint; returns items[]."""
+        for attempt in range(3):
+            if self._rate_limiter is not None:
+                await self._rate_limiter.wait_if_blocked()
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
+                    if self._rate_limiter is not None:
+                        self._rate_limiter.note_response(resp.status, resp.headers)
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("items", [])
+                    if resp.status in {403, 429}:
+                        if self._rate_limiter is not None:
+                            await self._rate_limiter.wait_if_blocked()
+                        else:
+                            await asyncio.sleep(5 * (attempt + 1))
+                        continue
+                    return []
+            except (asyncio.TimeoutError, aiohttp.ClientError):
+                await asyncio.sleep(1 + attempt)
+        return []
