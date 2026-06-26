@@ -160,5 +160,19 @@ class StateStore:
     def should_verify(self, key: str) -> bool:
         return self.cached_liveness(key) not in _TRUSTED
 
+    def get_block_until(self, resource: str) -> float | None:
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key=?", (f"block_until:{resource}",)
+        ).fetchone()
+        return float(row["value"]) if row else None
+
+    def set_block_until(self, resource: str, ts: float) -> None:
+        self._conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (f"block_until:{resource}", str(ts)),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

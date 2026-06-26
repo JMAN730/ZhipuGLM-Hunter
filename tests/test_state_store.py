@@ -85,3 +85,15 @@ def test_recheck_policy_live_and_error_reverify_dead_is_trusted(tmp_path):
     s.upsert_liveness("k_live", DEAD)
     assert s.cached_liveness("k_live") == DEAD
     s.close()
+
+
+def test_block_until_persists_across_reopen(tmp_path):
+    path = str(tmp_path / "state.db")
+    s = StateStore(path=path, use_state=True)
+    assert s.get_block_until("github_search") is None
+    s.set_block_until("github_search", 1_700_000_123.5)
+    s.close()
+    s2 = StateStore(path=path, use_state=True)  # reopen
+    assert s2.get_block_until("github_search") == 1_700_000_123.5
+    assert s2.get_block_until("other") is None
+    s2.close()
