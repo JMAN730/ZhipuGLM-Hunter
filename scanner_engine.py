@@ -324,10 +324,19 @@ class ScannerEngine:
 
     def _build_scanner(self, source: str):
         if source == "github_commits":
-            return GitHubCommitsScanner(concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages)
+            return GitHubCommitsScanner(
+                concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages,
+                rate_limiter=self._rate_limiter,
+            )
         if source == "github_issues":
-            return GitHubIssuesScanner(concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages)
-        return GitHubCodeScanner(concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages)
+            return GitHubIssuesScanner(
+                concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages,
+                rate_limiter=self._rate_limiter,
+            )
+        return GitHubCodeScanner(
+            concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages,
+            rate_limiter=self._rate_limiter,
+        )
 
     def _queries_for_source(self, source: str, code_queries: list[str]) -> list[str]:
         # Code search uses the rich filename:-qualified library; the commit/issue
@@ -335,7 +344,6 @@ class ScannerEngine:
         return code_queries if source == "github_code" else KEYWORD_QUERIES
 
     async def _search_all(self, code_queries: list[str]) -> list[dict]:
-        discovered: list[dict] = []
         for source in self.sources:
             if self._should_stop():
                 break
@@ -344,12 +352,17 @@ class ScannerEngine:
             for idx, query in enumerate(queries, start=1):
                 if self._should_stop():
                     break
+                if self._store.is_query_done(self._run_id, source, query):
+                    self.log(f"resume-skip [{source}] {query}")
+                    continue
                 self.log(f"search [{source}] [{idx}/{len(queries)}] {query}")
-                discovered.extend(await scanner.search(query))
+                for row in await scanner.search(query):
+                    self._store.record_finding(self._run_id, row)
+                self._store.mark_query_done(self._run_id, source, query)
                 self.progress_callback(idx, len(queries), f"search:{source}")
                 if idx < len(queries) and self.search_delay > 0:
                     await asyncio.sleep(self.search_delay)
-        return dedup_results(discovered)
+        return self._store.iter_run_findings(self._run_id)
 
     def _group_keys(self, results: list[dict]) -> dict:
         grouped: dict[str, dict] = {}
@@ -481,6 +494,8 @@ class ScannerEngine:
     def run(self, queries: list[str] | None = None) -> list[dict]:
         self._start_time = time.time()
         query_list = queries or load_queries()
+        self._ensure_store()
+        self._run_id = self._store.start_or_resume_run(self._config_sig(query_list), resume=self.resume)
         discovered = asyncio.run(self._search_all(query_list))
         self.log(f"discovered {len(discovered)} candidate locations across {len(self.sources)} source(s)")
 

@@ -37,7 +37,9 @@ class _FakeScanner:
 
 
 def test_search_all_aggregates_across_sources_and_dedups(monkeypatch):
-    engine = ScannerEngine(search_delay=0, sources=["github_code", "github_issues"])
+    engine = ScannerEngine(search_delay=0, sources=["github_code", "github_issues"], use_state=False)
+    engine._ensure_store()
+    engine._run_id = engine._store.start_or_resume_run("sig")
     rows = {
         "github_code": [{"source": "github_code", "key": "K", "url": "u1", "repo": "a/b"}],
         # same key, different source+url -> a distinct location, not a dup
@@ -52,7 +54,9 @@ def test_search_all_aggregates_across_sources_and_dedups(monkeypatch):
 
 
 def test_search_all_dedups_identical_locations(monkeypatch):
-    engine = ScannerEngine(search_delay=0, sources=["github_code"])
+    engine = ScannerEngine(search_delay=0, sources=["github_code"], use_state=False)
+    engine._ensure_store()
+    engine._run_id = engine._store.start_or_resume_run("sig")
     row = [{"source": "github_code", "key": "K", "url": "u1", "repo": "a/b"}]
     monkeypatch.setattr(engine, "_build_scanner", lambda source: _FakeScanner(row))
     # two identical queries -> same location twice -> dedup to one
