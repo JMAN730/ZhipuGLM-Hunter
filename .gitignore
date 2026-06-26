@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
+.ruff_cache/
 
 # Scan results (contains API keys — NEVER COMMIT)
 results/*.json
@@ -27,3 +29,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Local docs (untracked)
+CLAUDE.md
+USAGE.md

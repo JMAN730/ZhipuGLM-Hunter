@@ -1,0 +1,171 @@
+# Zhipu / BigModel / GLM search queries for GitHub Code Search.
+#
+# One query per line; lines starting with `#` and blank lines are ignored
+# (see scanner_engine.load_queries). These use the code-search `filename:`
+# qualifier — the commit/issue scanners use the plain KEYWORD_QUERIES set in
+# scanner_engine.py instead.
+
+# === Tier 1: env / dotenv files ===
+zhipu api key filename:env
+zhipu api key filename:env.local
+zhipu api key filename:env.production
+zhipu api key filename:env.development
+zhipu api key filename:env.dev
+zhipu api key filename:env.staging
+zhipu api key filename:env.test
+zhipu api key filename:env.example
+zhipu api key filename:env.sample
+ZHIPU_API_KEY filename:env
+ZHIPUAI_API_KEY filename:env
+ZHIPU_API_KEY filename:env.local
+ZHIPU_API_KEY filename:env.production
+GLM_API_KEY filename:env
+GLM_API_KEY filename:env.local
+BIGMODEL_API_KEY filename:env
+CHATGLM_API_KEY filename:env
+ZHIPUAI_API_KEY filename:env.example
+bigmodel api key filename:env
+open.bigmodel.cn filename:env
+open.bigmodel.cn filename:env.local
+open.bigmodel.cn filename:env.production
+
+# === Tier 1: credential / secret / config files ===
+zhipu filename:credentials
+zhipu filename:secrets
+zhipu filename:secrets.yaml
+zhipu filename:config
+zhipu filename:config.yml
+zhipu filename:config.yaml
+zhipu filename:config.json
+zhipu filename:settings.py
+zhipu filename:settings.json
+zhipu filename:application.yml
+zhipu filename:application.properties
+zhipu filename:yml
+zhipu filename:yaml
+zhipu filename:json
+zhipu filename:toml
+zhipu filename:ini
+zhipu filename:cfg
+zhipu filename:conf
+zhipu filename:properties
+zhipu filename:env.json
+bigmodel filename:yaml
+bigmodel filename:json
+open.bigmodel.cn filename:yaml
+open.bigmodel.cn filename:json
+open.bigmodel.cn filename:toml
+
+# === Tier 1: Python ===
+zhipu api key filename:py
+ZhipuAI api_key filename:py
+ZhipuAI( api_key filename:py
+from zhipuai filename:py
+import zhipuai filename:py
+zhipuai filename:py NOT env
+bigmodel filename:py
+chatglm api key filename:py
+glm-4 api key filename:py
+open.bigmodel.cn filename:py
+zhipu client filename:py
+zhipu requests filename:py
+ZHIPU_API_KEY filename:py
+GLM_API_KEY filename:py
+zhipu filename:ipynb
+glm-4 filename:ipynb
+
+# === Tier 1: JavaScript / TypeScript ===
+zhipu api key filename:js
+zhipu api key filename:ts
+zhipu api key filename:jsx
+zhipu api key filename:tsx
+zhipu api key filename:vue
+zhipu api key filename:mjs
+zhipu api key filename:cjs
+open.bigmodel.cn filename:js
+open.bigmodel.cn filename:ts
+ZHIPU_API_KEY filename:js
+ZHIPU_API_KEY filename:ts
+zhipuai filename:js
+zhipuai filename:ts
+
+# === Tier 2: other languages ===
+zhipu api key filename:java
+zhipu api key filename:kt
+zhipu api key filename:go
+zhipu api key filename:rs
+zhipu api key filename:php
+zhipu api key filename:rb
+zhipu api key filename:swift
+zhipu api key filename:cs
+zhipu api key filename:cpp
+zhipu api key filename:scala
+zhipu api key filename:dart
+zhipu api key filename:ex
+zhipu api key filename:sh
+zhipu api key filename:bash
+open.bigmodel.cn filename:go
+open.bigmodel.cn filename:java
+
+# === Tier 2: Docker / CI / CD ===
+zhipu filename:Dockerfile
+zhipu filename:docker-compose.yml
+zhipu filename:docker-compose.yaml
+zhipu filename:.github/workflows
+zhipu filename:gitlab-ci.yml
+zhipu filename:Jenkinsfile
+zhipu filename:Makefile
+ZHIPU_API_KEY filename:docker-compose.yml
+open.bigmodel.cn filename:Dockerfile
+
+# === Tier 2: notebooks / docs ===
+zhipu filename:ipynb
+zhipu filename:Rmd
+zhipu filename:md
+zhipu filename:mdx
+zhipu filename:rst
+open.bigmodel.cn filename:md
+
+# === Tier 3: framework / app integrations ===
+langchain zhipu api_key
+langchain_community zhipuai
+dify zhipu api_key
+fastgpt zhipu api_key
+litellm zhipu api_key
+autogen zhipu api_key
+crewai zhipu api_key
+ragflow zhipu api_key
+oneapi zhipu
+new-api zhipu
+lobechat zhipu
+nextchat zhipu
+chatgpt-on-wechat zhipu
+flowise zhipu
+bisheng zhipu
+maxkb zhipu
+anything-llm zhipu
+open-webui zhipu
+llama_index zhipuai
+semantic-kernel zhipu
+
+# === Tier 3: model-name references ===
+glm-4 api key
+glm-4-flash api key
+glm-4-plus api key
+glm-3-turbo api key
+glm-4v api key
+codegeex api key
+charglm api key
+cogview api key
+
+# === Tier 4: Chinese-language ===
+智谱 api key
+智谱 filename:env
+智谱 filename:py
+智谱AI api key
+智谱清言 api key
+智谱 密钥
+智谱 接口 filename:env
+智谱 API密钥
+bigmodel 密钥
+glm 密钥 filename:env
