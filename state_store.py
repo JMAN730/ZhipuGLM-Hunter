@@ -93,5 +93,19 @@ class StateStore:
         )
         self._conn.commit()
 
+    def is_query_done(self, run_id: str, source: str, query: str) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM progress WHERE run_id=? AND source=? AND query=?",
+            (run_id, source, query),
+        ).fetchone()
+        return row is not None
+
+    def mark_query_done(self, run_id: str, source: str, query: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO progress(run_id, source, query, done_at) VALUES(?,?,?,?)",
+            (run_id, source, query, time.time()),
+        )
+        self._conn.commit()
+
     def close(self) -> None:
         self._conn.close()

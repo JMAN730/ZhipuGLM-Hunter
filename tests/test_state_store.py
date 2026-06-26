@@ -39,3 +39,16 @@ def test_memory_mode_uses_in_memory_db(tmp_path):
     s.start_or_resume_run("sig")
     assert not (tmp_path / "nope.db").exists()
     s.close()
+
+
+def test_progress_marks_and_reads_per_run_source_query(tmp_path):
+    s = _store(tmp_path)
+    rid = s.start_or_resume_run("sig")
+    assert s.is_query_done(rid, "github_code", "q1") is False
+    s.mark_query_done(rid, "github_code", "q1")
+    assert s.is_query_done(rid, "github_code", "q1") is True
+    # different query / source / run are independent
+    assert s.is_query_done(rid, "github_code", "q2") is False
+    assert s.is_query_done(rid, "github_commits", "q1") is False
+    assert s.is_query_done("other-run", "github_code", "q1") is False
+    s.close()
