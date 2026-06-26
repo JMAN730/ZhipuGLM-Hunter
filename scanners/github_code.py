@@ -70,20 +70,7 @@ class GitHubCodeScanner(BaseScanner):
     async def _search_page(self, session: aiohttp.ClientSession, query: str, page: int) -> list[dict]:
         params = urllib.parse.urlencode({"q": query, "per_page": self.per_page, "page": page})
         url = f"{self.BASE}/search/code?{params}"
-
-        for attempt in range(3):
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        return data.get("items", [])
-                    if resp.status in {403, 429}:
-                        await asyncio.sleep(5 * (attempt + 1))
-                        continue
-                    return []
-            except (asyncio.TimeoutError, aiohttp.ClientError):
-                await asyncio.sleep(1 + attempt)
-        return []
+        return await self._rl_get_items(session, url)
 
     async def _scan_item(self, session: aiohttp.ClientSession, sem: asyncio.Semaphore, item: dict):
         repo_info = item.get("repository") or {}

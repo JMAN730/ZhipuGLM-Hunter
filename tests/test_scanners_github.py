@@ -4,7 +4,10 @@ Only the pure item->results parsers are exercised; the HTTP search loops are
 not called, so the suite stays offline.
 """
 
+import asyncio
+
 from scanners.base import auto_github_token, github_api_headers
+from scanners.github_code import GitHubCodeScanner
 from scanners.github_commits import GitHubCommitsScanner
 from scanners.github_issues import GitHubIssuesScanner
 
@@ -96,3 +99,23 @@ def test_commit_extracts_key_from_message_without_detail():
 def test_commit_handles_missing_fields():
     scanner = GitHubCommitsScanner(token="t")
     assert scanner._keys_from_commit({}, None) == []
+
+
+def test_search_page_delegates_to_rl_get_items_with_endpoint(monkeypatch):
+    captured = {}
+
+    async def fake_rl_get_items(self, session, url):
+        captured["url"] = url
+        return [{"ok": True}]
+
+    monkeypatch.setattr("scanners.base.BaseScanner._rl_get_items", fake_rl_get_items)
+
+    for scanner, fragment in [
+        (GitHubCodeScanner(), "/search/code?"),
+        (GitHubCommitsScanner(), "/search/commits?"),
+        (GitHubIssuesScanner(), "/search/issues?"),
+    ]:
+        items = asyncio.run(scanner._search_page(session=None, query="zhipu", page=1))
+        assert items == [{"ok": True}]
+        assert fragment in captured["url"]
+        assert "q=zhipu" in captured["url"] and "page=1" in captured["url"]
