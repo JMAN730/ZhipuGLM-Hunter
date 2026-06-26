@@ -145,5 +145,20 @@ class StateStore:
             for r in rows
         ]
 
+    def cached_liveness(self, key: str) -> str | None:
+        row = self._conn.execute("SELECT status FROM key_liveness WHERE key=?", (key,)).fetchone()
+        return row["status"] if row else None
+
+    def upsert_liveness(self, key: str, status: str) -> None:
+        self._conn.execute(
+            "INSERT INTO key_liveness(key, status, checked_at) VALUES(?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET status=excluded.status, checked_at=excluded.checked_at",
+            (key, status, time.time()),
+        )
+        self._conn.commit()
+
+    def should_verify(self, key: str) -> bool:
+        return self.cached_liveness(key) not in _TRUSTED
+
     def close(self) -> None:
         self._conn.close()

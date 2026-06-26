@@ -1,4 +1,4 @@
-from state_store import StateStore
+from state_store import DEAD, ERROR, LIVE, NOBALANCE, StateStore
 
 
 def _store(tmp_path, use_state=True):
@@ -66,4 +66,22 @@ def test_findings_dedup_by_digest_and_rebuild_for_run(tmp_path):
     assert len(rebuilt) == 2
     assert {r["url"] for r in rebuilt} == {"u1", "u2"}
     assert all(set(r) >= {"source", "key", "url", "repo", "file"} for r in rebuilt)
+    s.close()
+
+
+def test_recheck_policy_live_and_error_reverify_dead_is_trusted(tmp_path):
+    s = _store(tmp_path)
+    assert s.should_verify("never-seen") is True  # unknown -> verify
+    s.upsert_liveness("k_live", LIVE)
+    s.upsert_liveness("k_dead", DEAD)
+    s.upsert_liveness("k_err", ERROR)
+    s.upsert_liveness("k_nob", NOBALANCE)
+    assert s.should_verify("k_live") is True  # re-check live each run
+    assert s.should_verify("k_err") is True  # transient -> retry (NOT dead)
+    assert s.should_verify("k_dead") is False  # trusted dead
+    assert s.should_verify("k_nob") is False  # trusted terminal
+    assert s.cached_liveness("k_dead") == DEAD
+    # status is overwritten on re-check, not duplicated
+    s.upsert_liveness("k_live", DEAD)
+    assert s.cached_liveness("k_live") == DEAD
     s.close()
