@@ -1,6 +1,6 @@
 """Tests for scanner helper functions."""
 
-from scanners.base import dedup_results, extract_keys, is_bad_key, redact_key
+from scanners.base import dedup_results, extract_keys, finding_digest, is_bad_key, redact_key
 
 VALID_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6.AbCdEfGhIjKlMnOp"
 
@@ -37,3 +37,12 @@ def test_dedup_results_collapses_identical_source_key_url():
         {"source": "github", "key": VALID_KEY, "url": "u2"},
     ]
     assert len(dedup_results(results)) == 2
+
+
+def test_finding_digest_is_stable_and_keyed_on_source_key_url():
+    a = {"source": "github_code", "key": "K", "url": "u1", "repo": "a/b"}
+    b = {"source": "github_code", "key": "K", "url": "u1", "repo": "DIFFERENT"}
+    c = {"source": "github_issues", "key": "K", "url": "u1"}
+    assert finding_digest(a) == finding_digest(b)  # repo is not part of identity
+    assert finding_digest(a) != finding_digest(c)  # source is
+    assert len(finding_digest(a)) == 32

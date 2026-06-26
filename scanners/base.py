@@ -92,14 +92,16 @@ def extract_keys(text: str, extra_bad: list[str] | None = None) -> list[str]:
     return [key for key in keys if not is_bad_key(key, extra_bad)]
 
 
+def finding_digest(result: dict) -> str:
+    raw = f"{result.get('source', '')}:{result.get('key', '')}:{result.get('url', '')}"
+    return hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()
+
+
 def dedup_results(results: list[dict]) -> list[dict]:
     seen = set()
     out = []
     for result in results:
-        digest = hashlib.md5(
-            f"{result.get('source', '')}:{result.get('key', '')}:{result.get('url', '')}".encode(),
-            usedforsecurity=False,
-        ).hexdigest()
+        digest = finding_digest(result)
         if digest not in seen:
             seen.add(digest)
             out.append(result)
