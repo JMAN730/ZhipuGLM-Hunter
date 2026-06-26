@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import json
 import os
 import subprocess
@@ -14,10 +15,11 @@ from typing import Callable
 
 import aiohttp
 
-from scanners.base import dedup_results, extract_keys, is_bad_key, redact_key
+from scanners.base import RateLimiter, dedup_results, extract_keys, is_bad_key, redact_key
 from scanners.github_code import GitHubCodeScanner
 from scanners.github_commits import GitHubCommitsScanner
 from scanners.github_issues import GitHubIssuesScanner
+from state_store import DEAD, ERROR, LIVE, NOBALANCE, StateStore
 
 ZHIPU_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
 VERIFY_PATH = "/models"
@@ -99,6 +101,18 @@ def parse_zhipu_models_response(data: dict) -> dict:
             "provider_note": "Valid key (balance not available via API)",
         }
     return {"valid": False, "provider": "zhipu", "reason": "unexpected_response"}
+
+
+def liveness_status(result: dict) -> str:
+    """Map a verify result to a cached liveness status (see state_store)."""
+    if result.get("valid"):
+        return LIVE
+    reason = result.get("reason", "")
+    if reason == "invalid_key":
+        return DEAD
+    if reason == "insufficient_balance":
+        return NOBALANCE
+    return ERROR
 
 
 def parse_zhipu_balance(data: dict) -> dict:
@@ -192,6 +206,9 @@ class ScannerEngine:
         auto_disclose: bool | None = None,
         disclose_dry_run: bool | None = None,
         disclose_max_repo_age_days: int | None = None,
+        state_db: str = "results/state.db",
+        resume: bool = False,
+        use_state: bool = True,
     ):
         self.concurrency = concurrency
         self.timeout = timeout
@@ -231,6 +248,16 @@ class ScannerEngine:
                 log=lambda msg, *_a, **_k: self.log(msg),
             )
 
+        # Durable state is created lazily (see _ensure_store) so constructing an
+        # engine never touches disk; run()/verify_keys() open it on first use.
+        self.state_db = state_db
+        self.resume = resume
+        self.use_state = use_state
+        self._store: StateStore | None = None
+        self._run_id: str | None = None
+        self._rate_limiter: RateLimiter | None = None
+        self._verify_limiter: RateLimiter | None = None
+
     def log(self, message: str):
         stamp = time.strftime("%m-%d %H:%M:%S")
         print(f"[{stamp}] {message}", flush=True)
@@ -262,6 +289,20 @@ class ScannerEngine:
         if self.max_duration > 0 and self._start_time and time.time() - self._start_time >= self.max_duration:
             return True
         return False
+
+    def _ensure_store(self) -> StateStore:
+        if self._store is None:
+            self._store = StateStore(path=self.state_db, use_state=self.use_state)
+            self._rate_limiter = RateLimiter("github_search", store=self._store)
+            self._verify_limiter = RateLimiter("zhipu_verify", store=self._store)
+        return self._store
+
+    def _config_sig(self, code_queries: list[str]) -> str:
+        payload = json.dumps(
+            {"sources": sorted(self.sources), "pages": self.scan_pages, "queries": list(code_queries)},
+            sort_keys=True,
+        )
+        return hashlib.md5(payload.encode(), usedforsecurity=False).hexdigest()
 
     async def search_github_code(self, queries: list[str]) -> list[dict]:
         scanner = GitHubCodeScanner(concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages)
