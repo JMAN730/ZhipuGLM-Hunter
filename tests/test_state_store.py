@@ -52,3 +52,18 @@ def test_progress_marks_and_reads_per_run_source_query(tmp_path):
     assert s.is_query_done(rid, "github_commits", "q1") is False
     assert s.is_query_done("other-run", "github_code", "q1") is False
     s.close()
+
+
+def test_findings_dedup_by_digest_and_rebuild_for_run(tmp_path):
+    s = _store(tmp_path)
+    rid = s.start_or_resume_run("sig")
+    f1 = {"source": "github_code", "key": "K", "url": "u1", "repo": "a/b", "file": ".env"}
+    f2 = {"source": "github_code", "key": "K", "url": "u2", "repo": "a/b", "file": ".env"}
+    s.record_finding(rid, f1)
+    s.record_finding(rid, f1)  # exact duplicate -> collapses
+    s.record_finding(rid, f2)  # same key, different url -> distinct location
+    rebuilt = s.iter_run_findings(rid)
+    assert len(rebuilt) == 2
+    assert {r["url"] for r in rebuilt} == {"u1", "u2"}
+    assert all(set(r) >= {"source", "key", "url", "repo", "file"} for r in rebuilt)
+    s.close()

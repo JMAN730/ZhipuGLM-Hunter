@@ -12,6 +12,8 @@ import sqlite3
 import time
 import uuid
 
+from scanners.base import finding_digest
+
 SCHEMA_VERSION = 1
 
 LIVE = "live"
@@ -106,6 +108,42 @@ class StateStore:
             (run_id, source, query, time.time()),
         )
         self._conn.commit()
+
+    def record_finding(self, run_id: str, finding: dict) -> None:
+        digest = finding_digest(finding)
+        now = time.time()
+        self._conn.execute(
+            "INSERT INTO findings(digest, source, key, url, repo, file, status, first_seen, last_seen) "
+            "VALUES(?,?,?,?,?,?,'',?,?) "
+            "ON CONFLICT(digest) DO UPDATE SET last_seen=excluded.last_seen",
+            (
+                digest,
+                finding.get("source", ""),
+                finding.get("key", ""),
+                finding.get("url", ""),
+                finding.get("repo", ""),
+                finding.get("file", ""),
+                now,
+                now,
+            ),
+        )
+        self._conn.execute(
+            "INSERT OR IGNORE INTO run_findings(run_id, digest) VALUES(?,?)",
+            (run_id, digest),
+        )
+        self._conn.commit()
+
+    def iter_run_findings(self, run_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT f.source, f.key, f.url, f.repo, f.file "
+            "FROM findings f JOIN run_findings r ON r.digest = f.digest "
+            "WHERE r.run_id = ?",
+            (run_id,),
+        ).fetchall()
+        return [
+            {"source": r["source"], "key": r["key"], "url": r["url"], "repo": r["repo"], "file": r["file"]}
+            for r in rows
+        ]
 
     def close(self) -> None:
         self._conn.close()
