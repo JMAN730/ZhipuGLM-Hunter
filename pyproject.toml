@@ -22,7 +22,7 @@ dev = [
 
 [tool.setuptools]
 packages = ["scanners"]
-py-modules = ["scanner_engine"]
+py-modules = ["scanner_engine", "state_store"]
 
 [tool.ruff]
 line-length = 120
