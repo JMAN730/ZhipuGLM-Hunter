@@ -55,3 +55,29 @@ def test_search_all_skips_queries_already_done_on_resume(monkeypatch):
     assert scanner.calls == ["q2"]  # q1 skipped
     assert len(discovered) == 1  # findings rebuilt from the store
     assert discovered[0]["url"] == "u1"
+
+
+def test_verify_skips_cached_dead_keys_without_network(monkeypatch):
+    engine = ScannerEngine(concurrency=2, use_state=False)
+    engine._ensure_store()
+    engine._store.upsert_liveness("deadkey", DEAD)  # already known dead
+
+    verified_keys = []
+
+    async def fake_verify_one(self, session, key, semaphore):
+        verified_keys.append(key)
+        return {"valid": False, "provider": "zhipu", "reason": "invalid_key"}
+
+    monkeypatch.setattr(ScannerEngine, "_verify_one", fake_verify_one)
+
+    grouped = {
+        "deadkey": {"repos": [{"source": "github_code", "repo": "a/b", "url": "u1", "file": ""}]},
+        "freshkey": {"repos": [{"source": "github_code", "repo": "c/d", "url": "u2", "file": ""}]},
+    }
+    results = engine.verify_keys(grouped)
+
+    assert verified_keys == ["freshkey"]  # dead key never hit the network
+    by_key = {r["key"]: r for r in results}
+    assert by_key["deadkey"]["valid"] is False
+    assert "cached" in by_key["deadkey"]["reason"]
+    assert set(by_key) == {"deadkey", "freshkey"}  # both still reported

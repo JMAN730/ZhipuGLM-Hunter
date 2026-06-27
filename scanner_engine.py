@@ -383,8 +383,10 @@ class ScannerEngine:
     async def _request_verify(self, session: aiohttp.ClientSession, api_key: str, path: str) -> tuple[int, dict | None]:
         url = f"{PROVIDER_CONFIG['base']}{path}"
         headers = {"Authorization": f"Bearer {api_key}"}
+        await self._verify_limiter.wait_if_blocked()
         try:
             async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=self.timeout)) as resp:
+                self._verify_limiter.note_response(resp.status, resp.headers)
                 data = None
                 if resp.content_type == "application/json":
                     data = await resp.json()
@@ -438,6 +440,26 @@ class ScannerEngine:
         except Exception as exc:  # never abort the scan on disclosure failure
             self.log(f"  [DISCLOSE] error: {str(exc)[:120]}")
 
+    def _result_row(self, key: str, info: dict, result: dict) -> dict:
+        total_balance = result.get("total_balance", 0.0)
+        primary_currency = result.get("primary_currency", "CNY")
+        return {
+            "key": key,
+            "key_redacted": redact_key(key),
+            "valid": result.get("valid", False),
+            "balance": total_balance,
+            "balance_details": result.get("balance_details", []),
+            "primary_currency": primary_currency,
+            "balance_usd": convert_to_usd(total_balance, primary_currency, self.usd_cny_rate),
+            "balance_cny": convert_to_cny(total_balance, primary_currency, self.usd_cny_rate),
+            "balance_unavailable": result.get("balance_unavailable", False),
+            "reason": result.get("reason", ""),
+            "provider": result.get("provider", "zhipu"),
+            "provider_note": result.get("provider_note", ""),
+            "repos": info["repos"],
+            "verified_at": datetime.now().isoformat(),
+        }
+
     async def _verify_all_async(self, grouped_keys: dict) -> list[dict]:
         semaphore = asyncio.Semaphore(self.concurrency)
         items = list(grouped_keys.items())
@@ -450,38 +472,30 @@ class ScannerEngine:
                     break
 
                 batch = items[start : start + self.concurrency]
+                decided = [(key, info, self._store.should_verify(key)) for key, info in batch]
+                to_verify = [(key, info) for key, info, sv in decided if sv]
+                cached = [(key, info) for key, info, sv in decided if not sv]
+
                 verified = await asyncio.gather(
-                    *(self._verify_one(session, key, semaphore) for key, _info in batch)
+                    *(self._verify_one(session, key, semaphore) for key, _info in to_verify)
                 )
 
-                for (key, info), result in zip(batch, verified):
+                for (key, info), result in zip(to_verify, verified):
+                    self._store.upsert_liveness(key, liveness_status(result))
                     if result.get("valid"):
                         valid_count += 1
                         self.log(f"verify {redact_key(key)} -> {format_balance_log(result, self.usd_cny_rate)}")
                         self._maybe_disclose(key, info, result)
                     else:
                         self.log(f"verify {redact_key(key)} -> {result.get('reason', '?')}")
+                    results.append(self._result_row(key, info, result))
+                    self.progress_callback(len(results), len(items), "verify")
 
-                    total_balance = result.get("total_balance", 0.0)
-                    primary_currency = result.get("primary_currency", "CNY")
-                    results.append(
-                        {
-                            "key": key,
-                            "key_redacted": redact_key(key),
-                            "valid": result.get("valid", False),
-                            "balance": total_balance,
-                            "balance_details": result.get("balance_details", []),
-                            "primary_currency": primary_currency,
-                            "balance_usd": convert_to_usd(total_balance, primary_currency, self.usd_cny_rate),
-                            "balance_cny": convert_to_cny(total_balance, primary_currency, self.usd_cny_rate),
-                            "balance_unavailable": result.get("balance_unavailable", False),
-                            "reason": result.get("reason", ""),
-                            "provider": result.get("provider", "zhipu"),
-                            "provider_note": result.get("provider_note", ""),
-                            "repos": info["repos"],
-                            "verified_at": datetime.now().isoformat(),
-                        }
-                    )
+                for key, info in cached:
+                    status = self._store.cached_liveness(key)
+                    result = {"valid": False, "provider": "zhipu", "reason": f"{status} (cached)"}
+                    self.log(f"verify {redact_key(key)} -> {result['reason']} (skipped)")
+                    results.append(self._result_row(key, info, result))
                     self.progress_callback(len(results), len(items), "verify")
 
         return results
@@ -489,6 +503,7 @@ class ScannerEngine:
     def verify_keys(self, grouped_keys: dict) -> list[dict]:
         if not grouped_keys:
             return []
+        self._ensure_store()
         return asyncio.run(self._verify_all_async(grouped_keys))
 
     def run(self, queries: list[str] | None = None) -> list[dict]:
@@ -503,6 +518,9 @@ class ScannerEngine:
         self.log(f"extracted {len(grouped)} unique candidate keys")
 
         results = self.verify_keys(grouped)
+        if self._run_id is not None:
+            self._store.finish_run(self._run_id)
+        self._store.close()
         self.save_results(results)
         return results
 
