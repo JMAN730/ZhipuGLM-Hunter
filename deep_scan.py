@@ -45,6 +45,16 @@ def main():
         metavar="N",
         help="Only disclose repos pushed within the last N days (0 = no age gate).",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume the most recent unfinished run with the same config (skip already-done queries).",
+    )
+    parser.add_argument(
+        "--no-state",
+        action="store_true",
+        help="Disable the durable state DB (no checkpoint/resume, dedup, or liveness cache).",
+    )
     args = parser.parse_args()
 
     sources = [source.strip() for source in args.sources.split(",") if source.strip()]
@@ -57,6 +67,8 @@ def main():
         max_valid_keys=args.max_valid_keys,
         output_dir="results",
         sources=sources,
+        resume=args.resume,
+        use_state=not args.no_state,
     )
     results = engine.run(load_queries(args.query_file))
     _print_summary(results, "Deep scan")
