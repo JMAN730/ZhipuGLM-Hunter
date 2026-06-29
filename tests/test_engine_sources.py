@@ -2,9 +2,11 @@
 
 import asyncio
 
-from scanner_engine import DEFAULT_SOURCES, KEYWORD_QUERIES, ScannerEngine
+from scanner_engine import ALL_GITHUB_SOURCES, DEFAULT_SOURCES, KEYWORD_QUERIES, OPTIONAL_GITHUB_SOURCES, ScannerEngine
 from scanners.github_code import GitHubCodeScanner
 from scanners.github_commits import GitHubCommitsScanner
+from scanners.github_events import GitHubEventsScanner
+from scanners.github_gist import GitHubGistScanner
 from scanners.github_issues import GitHubIssuesScanner
 
 
@@ -19,6 +21,8 @@ def test_queries_for_source_picks_code_vs_keyword():
     assert engine._queries_for_source("github_code", code_queries) == code_queries
     assert engine._queries_for_source("github_commits", code_queries) == KEYWORD_QUERIES
     assert engine._queries_for_source("github_issues", code_queries) == KEYWORD_QUERIES
+    assert engine._queries_for_source("github_gist", code_queries) == [""]
+    assert engine._queries_for_source("github_events", code_queries) == [""]
 
 
 def test_build_scanner_returns_expected_types():
@@ -26,6 +30,12 @@ def test_build_scanner_returns_expected_types():
     assert isinstance(engine._build_scanner("github_code"), GitHubCodeScanner)
     assert isinstance(engine._build_scanner("github_commits"), GitHubCommitsScanner)
     assert isinstance(engine._build_scanner("github_issues"), GitHubIssuesScanner)
+    assert isinstance(engine._build_scanner("github_gist"), GitHubGistScanner)
+    assert isinstance(engine._build_scanner("github_events"), GitHubEventsScanner)
+
+
+def test_all_github_sources_includes_optional():
+    assert set(ALL_GITHUB_SOURCES) == set(DEFAULT_SOURCES) | set(OPTIONAL_GITHUB_SOURCES)
 
 
 class _FakeScanner:

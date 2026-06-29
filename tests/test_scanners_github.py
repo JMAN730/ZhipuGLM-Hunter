@@ -6,6 +6,7 @@ not called, so the suite stays offline.
 
 from scanners.base import auto_github_token, github_api_headers
 from scanners.github_commits import GitHubCommitsScanner
+from scanners.github_gist import GitHubGistScanner
 from scanners.github_issues import GitHubIssuesScanner
 
 VALID_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6.AbCdEfGhIjKlMnOp"
@@ -96,3 +97,7 @@ def test_commit_extracts_key_from_message_without_detail():
 def test_commit_handles_missing_fields():
     scanner = GitHubCommitsScanner(token="t")
     assert scanner._keys_from_commit({}, None) == []
+
+
+def test_gist_source_name():
+    assert GitHubGistScanner(token="t").source_name == "github_gist"

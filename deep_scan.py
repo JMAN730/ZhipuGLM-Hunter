@@ -21,6 +21,11 @@ def main():
     parser.add_argument("--query-file", default="queries_v4.txt", help="Query file to load.")
     parser.add_argument("--max-valid-keys", type=int, default=0, help="Stop after this many valid keys; 0 disables.")
     parser.add_argument(
+        "--no-balance",
+        action="store_true",
+        help="Liveness check only (/models); skip Coding Plan quota inspection.",
+    )
+    parser.add_argument(
         "--sources",
         default="github_code,github_commits,github_issues",
         help="Comma-separated GitHub sources to scan (github_code,github_commits,github_issues).",
@@ -57,6 +62,7 @@ def main():
         max_valid_keys=args.max_valid_keys,
         output_dir="results",
         sources=sources,
+        check_balance=not args.no_balance,
     )
     results = engine.run(load_queries(args.query_file))
     _print_summary(results, "Deep scan")

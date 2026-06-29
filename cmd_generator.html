@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ZhipuGLM Hunter — Command Generator</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    label { display: block; margin-top: 1rem; font-weight: 600; }
+    input, select, textarea { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+    textarea { min-height: 120px; font-family: ui-monospace, monospace; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    button { margin-top: 1rem; padding: 0.6rem 1rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>ZhipuGLM Hunter</h1>
+  <p>Generate a scan command. Run from the project root with <code>.venv/bin/python</code>.</p>
+
+  <label for="script">Script</label>
+  <select id="script">
+    <option value="deep_scan.py">deep_scan.py — configurable one-shot</option>
+    <option value="quick_batch.py">quick_batch.py — fast smoke test</option>
+    <option value="ultimate_scan.py">ultimate_scan.py — full query library</option>
+    <option value="max_scan.py">max_scan.py — high pages / concurrency</option>
+    <option value="expanded_scan.py">expanded_scan.py — high-yield + gist</option>
+    <option value="marathon_scan.py">marathon_scan.py — continuous cycles</option>
+    <option value="zhipu_key_scanner.py">zhipu_key_scanner.py — unified CLI</option>
+    <option value="verify_balances.py">verify_balances.py — re-check saved JSON</option>
+    <option value="probe_spend.py">probe_spend.py — 1-token spend probe</option>
+    <option value="test_chat.py">test_chat.py — hello chatbot smoke test</option>
+  </select>
+
+  <div class="row">
+    <div>
+      <label for="hours">--hours</label>
+      <input id="hours" type="number" step="0.25" value="1">
+    </div>
+    <div>
+      <label for="pages">--pages / --scan-pages</label>
+      <input id="pages" type="number" value="2">
+    </div>
+  </div>
+
+  <label for="sources">--sources</label>
+  <input id="sources" value="github_code,github_commits,github_issues">
+
+  <label><input id="no_balance" type="checkbox"> --no-balance (liveness only)</label>
+  <label><input id="disclose" type="checkbox"> --disclose (dry-run)</label>
+  <label><input id="disclose_send" type="checkbox"> --disclose-send</label>
+
+  <label for="command">Command</label>
+  <textarea id="command" readonly></textarea>
+  <button type="button" id="copy">Copy command</button>
+
+  <script>
+    const script = document.getElementById('script');
+    const hours = document.getElementById('hours');
+    const pages = document.getElementById('pages');
+    const sources = document.getElementById('sources');
+    const noBalance = document.getElementById('no_balance');
+    const disclose = document.getElementById('disclose');
+    const discloseSend = document.getElementById('disclose_send');
+    const command = document.getElementById('command');
+
+    function build() {
+      const name = script.value;
+      const parts = ['.venv/bin/python', name];
+      if (name === 'verify_balances.py') {
+        parts.push('results/zhipu_keys_result.json', '--valid-only');
+      } else if (name === 'probe_spend.py') {
+        parts.push('results/zhipu_keys_result.json', '--valid-only', '--limit', '5');
+      } else if (name === 'test_chat.py') {
+        parts.push('--concurrency', '12');
+      } else if (name === 'quick_batch.py') {
+        if (noBalance.checked) parts.push('--no-balance');
+      } else if (name === 'zhipu_key_scanner.py') {
+        parts.push('--scan-pages', pages.value, '--hours', hours.value, '--sources', sources.value);
+        if (noBalance.checked) parts.push('--no-balance');
+        if (disclose.checked) parts.push('--disclose');
+        if (discloseSend.checked) parts.push('--disclose-send');
+      } else if (name === 'marathon_scan.py') {
+        parts.push('--hours-per-cycle', hours.value, '--pages', pages.value, '--sources', sources.value);
+        if (noBalance.checked) parts.push('--no-balance');
+        if (disclose.checked) parts.push('--disclose');
+        if (discloseSend.checked) parts.push('--disclose-send');
+      } else if (name === 'expanded_scan.py') {
+        parts.push('--hours', hours.value, '--pages', pages.value);
+        if (noBalance.checked) parts.push('--no-balance');
+      } else if (name === 'max_scan.py') {
+        parts.push('--hours', hours.value, '--pages', pages.value, '--sources', sources.value);
+        if (noBalance.checked) parts.push('--no-balance');
+      } else {
+        parts.push('--hours', hours.value, '--pages', pages.value, '--sources', sources.value);
+        if (noBalance.checked) parts.push('--no-balance');
+        if (disclose.checked) parts.push('--disclose');
+        if (discloseSend.checked) parts.push('--disclose-send');
+      }
+      command.value = parts.join(' ');
+    }
+
+    [script, hours, pages, sources, noBalance, disclose, discloseSend].forEach(el => {
+      el.addEventListener('input', build);
+      el.addEventListener('change', build);
+    });
+    document.getElementById('copy').addEventListener('click', () => {
+      command.select();
+      navigator.clipboard.writeText(command.value);
+    });
+    build();
+  </script>
+</body>
+</html>
