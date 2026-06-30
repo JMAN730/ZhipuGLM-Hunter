@@ -169,3 +169,118 @@ cogview api key
 智谱 API密钥
 bigmodel 密钥
 glm 密钥 filename:env
+
+# === Tier 5: expansion to 200+ patterns ===
+zhipu api key pushed:>2026-01-01
+zhipu api key created:>2026-01-01
+ZHIPU_API_KEY filename:env.staging
+ZHIPU_API_KEY filename:env.development
+GLM_API_KEY filename:env.staging
+BIGMODEL_API_KEY filename:env.production
+chatglm filename:yaml
+glm-4-flash filename:env
+glm-4-plus filename:env
+open.bigmodel.cn filename:jsx
+open.bigmodel.cn filename:tsx
+open.bigmodel.cn filename:vue
+open.bigmodel.cn filename:ipynb
+open.bigmodel.cn filename:gitlab-ci.yml
+open.bigmodel.cn filename:.github/workflows
+open.bigmodel.cn filename:Makefile
+open.bigmodel.cn filename:docker-compose.yml
+zhipu filename:gradle
+zhipu filename:pom.xml
+zhipu filename:package.json
+zhipu filename:pyproject.toml
+zhipu filename:appsettings.json
+zhipu filename:serverless.yml
+zhipu filename:vercel.json
+zhipu filename:netlify.toml
+zhipu filename:fly.toml
+zhipu filename:Procfile
+zhipu filename:terraform
+zhipu filename:helm
+zhipu filename:values.yaml
+zhipu filename:ps1
+zhipu filename:lua
+zhipu filename:pl
+zhipu filename:Gemfile
+zhipu filename:composer.json
+zhipu filename:setup.py
+zhipu filename:Pipfile
+zhipu filename:environment.yml
+zhipu filename:nix
+zhipu filename:flake.nix
+zhipu filename:justfile
+zhipu filename:dockerignore
+zhipu def filename:py
+智谱 filename:yaml
+智谱 filename:json
+智谱 filename:toml
+智谱 open.bigmodel.cn
+zhipuai filename:env
+zhipu secret filename:env
+zhipu token filename:env
+zhipu credential filename:env
+zhipu apikey filename:env
+langchain zhipu filename:py
+dify zhipu filename:py
+litellm zhipu filename:py
+autogen zhipu filename:py
+crewai zhipu filename:py
+fastgpt zhipu filename:py
+ragflow zhipu filename:py
+oneapi zhipu filename:env
+lobechat zhipu filename:env
+nextchat zhipu filename:env
+chatgpt-on-wechat zhipu filename:env
+zhipu bearer filename:env
+zhipu authorization filename:env
+open.bigmodel.cn filename:properties
+open.bigmodel.cn filename:ini
+zhipu filename:web.config
+zhipu filename:appsettings.Development.json
+zhipu filename:appsettings.Production.json
+zhipu filename:local.settings.json
+zhipu filename:Taskfile.yml
+zhipu filename:render.yaml
+zhipu filename:build.gradle
+zhipu filename:settings.gradle
+zhipu filename:Podfile
+zhipu filename:poetry.lock
+zhipu filename:uv.lock
+zhipu filename:conda.yml
+zhipu filename:clj
+zhipu filename:h
+zhipu filename:tf
+zhipu filename:pnpm-lock.yaml
+zhipu filename:secrets.toml
+zhipu filename:credentials.json
+zhipu filename:.envrc
+zhipu filename:env.template
+zhipu filename:env.dist
+zhipu api key pushed:>2025-06-01
+zhipu api key created:>2025-06-01
+ZHIPUAI_API_KEY filename:env.staging
+CHATGLM_API_KEY filename:env.production
+open.bigmodel.cn filename:env.staging
+open.bigmodel.cn filename:env.development
+open.bigmodel.cn filename:env.test
+open.bigmodel.cn filename:env.dev
+open.bigmodel.cn filename:env.prod
+open.bigmodel.cn filename:env.stage
+open.bigmodel.cn filename:env.qa
+open.bigmodel.cn filename:env.uat
+open.bigmodel.cn filename:env.ci
+open.bigmodel.cn filename:env.secrets
+open.bigmodel.cn filename:env.private
+open.bigmodel.cn filename:env.docker
+open.bigmodel.cn filename:env.k8s
+open.bigmodel.cn filename:env.backup
+open.bigmodel.cn filename:env.old
+open.bigmodel.cn filename:env.template
+open.bigmodel.cn filename:env.dist
+open.bigmodel.cn filename:env.override
+open.bigmodel.cn filename:env.defaults
+open.bigmodel.cn filename:envrc
+open.bigmodel.cn filename:.envrc

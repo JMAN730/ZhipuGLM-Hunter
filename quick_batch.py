@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 from scanner_engine import BUILTIN_QUERIES, ScannerEngine
 
 
@@ -12,6 +14,14 @@ def _print_summary(results: list[dict], label: str):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Run a small ZhipuGLM Hunter scan.")
+    parser.add_argument(
+        "--no-balance",
+        action="store_true",
+        help="Liveness check only (/models); skip Coding Plan quota inspection.",
+    )
+    args = parser.parse_args()
+
     queries = BUILTIN_QUERIES[:12]
     engine = ScannerEngine(
         concurrency=6,
@@ -20,6 +30,7 @@ def main():
         scan_pages=1,
         max_duration=15 * 60,
         output_dir="results",
+        check_balance=not args.no_balance,
     )
     results = engine.run(queries)
     _print_summary(results, "Quick scan")

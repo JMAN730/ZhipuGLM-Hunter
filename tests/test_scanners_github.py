@@ -9,6 +9,7 @@ import asyncio
 from scanners.base import auto_github_token, github_api_headers
 from scanners.github_code import GitHubCodeScanner
 from scanners.github_commits import GitHubCommitsScanner
+from scanners.github_gist import GitHubGistScanner
 from scanners.github_issues import GitHubIssuesScanner
 
 VALID_KEY = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6.AbCdEfGhIjKlMnOp"
@@ -119,3 +120,7 @@ def test_search_page_delegates_to_rl_get_items_with_endpoint(monkeypatch):
         assert items == [{"ok": True}]
         assert fragment in captured["url"]
         assert "q=zhipu" in captured["url"] and "page=1" in captured["url"]
+
+
+def test_gist_source_name():
+    assert GitHubGistScanner(token="t").source_name == "github_gist"

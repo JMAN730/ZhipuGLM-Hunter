@@ -32,6 +32,11 @@ def main():
     parser.add_argument("--concurrency", type=int, default=8, help="Concurrent fetch/verify requests.")
     parser.add_argument("--query-file", default="queries_v4.txt", help="Query file to load.")
     parser.add_argument(
+        "--no-balance",
+        action="store_true",
+        help="Liveness check only (/models); skip Coding Plan quota inspection.",
+    )
+    parser.add_argument(
         "--sources",
         default="github_code,github_commits,github_issues",
         help="Comma-separated GitHub sources to scan.",
@@ -77,6 +82,7 @@ def main():
                 sources=sources,
                 resume=args.resume,
                 use_state=not args.no_state,
+                check_balance=not args.no_balance,
             )
             results = engine.run(queries)
             _print_summary(results, f"cycle {cycle}")

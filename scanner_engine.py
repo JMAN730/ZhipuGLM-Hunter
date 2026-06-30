@@ -18,12 +18,20 @@ import aiohttp
 from scanners.base import RateLimiter, dedup_results, extract_keys, is_bad_key, redact_key
 from scanners.github_code import GitHubCodeScanner
 from scanners.github_commits import GitHubCommitsScanner
+from scanners.github_events import GitHubEventsScanner
+from scanners.github_gist import GitHubGistScanner
 from scanners.github_issues import GitHubIssuesScanner
 from state_store import DEAD, ERROR, LIVE, NOBALANCE, StateStore
 
 ZHIPU_API_BASE = "https://open.bigmodel.cn/api/paas/v4"
 VERIFY_PATH = "/models"
 BALANCE_PATH = "/user/balance"
+QUOTA_PATH = "/api/monitor/usage/quota/limit"
+QUOTA_ENDPOINT_BASES = (
+    "https://open.bigmodel.cn",
+    "https://bigmodel.cn",
+    "https://api.z.ai",
+)
 RESULT_BASENAME = "zhipu_keys_result"
 DEFAULT_USD_CNY_RATE = 7.25
 
@@ -70,6 +78,11 @@ BUILTIN_QUERIES = [
 # they surface can be responsibly disclosed via an issue on the affected repo.
 DEFAULT_SOURCES = ("github_code", "github_commits", "github_issues")
 
+# Optional GitHub sources (enable via --sources). Gist uses owner/gist pseudo-repo;
+# events polls the public event stream (best for short monitor runs).
+OPTIONAL_GITHUB_SOURCES = ("github_gist", "github_events")
+ALL_GITHUB_SOURCES = DEFAULT_SOURCES + OPTIONAL_GITHUB_SOURCES
+
 # Plain free-text queries for the commit/issue search APIs, which do NOT support
 # the code-search `filename:` qualifier that fills queries_v4.txt.
 KEYWORD_QUERIES = [
@@ -98,7 +111,7 @@ def parse_zhipu_models_response(data: dict) -> dict:
             "balance_details": [],
             "primary_currency": "CNY",
             "balance_unavailable": True,
-            "provider_note": "Valid key (balance not available via API)",
+            "provider_note": "Pay-as-you-go (cash balance not exposed via API)",
         }
     return {"valid": False, "provider": "zhipu", "reason": "unexpected_response"}
 
@@ -148,6 +161,96 @@ def parse_zhipu_balance(data: dict) -> dict:
         "balance_details": details,
         "primary_currency": primary_currency,
         "balance_unavailable": False,
+        "balance_kind": "cash",
+    }
+
+
+def _quota_used_percent(limit: dict) -> float | None:
+    """Return used percent for a quota limit item (Zhipu `percentage` is used, not remaining)."""
+    usage = limit.get("usage")
+    current = limit.get("currentValue")
+    if usage is not None and current is not None:
+        usage_f = float(usage)
+        if usage_f <= 0:
+            return None
+        return min(100.0, max(0.0, float(current) / usage_f * 100.0))
+    if limit.get("percentage") is not None:
+        return float(limit["percentage"])
+    return None
+
+
+def _quota_limit_remaining(limit: dict) -> tuple[float | None, float | None]:
+    """Derive absolute token remaining and/or remaining percent from a limit item."""
+    if limit.get("remaining") is not None:
+        used_pct = _quota_used_percent(limit)
+        remaining_pct = max(0.0, min(100.0, 100.0 - used_pct)) if used_pct is not None else None
+        return float(limit["remaining"]), remaining_pct
+
+    usage = limit.get("usage")
+    current = limit.get("currentValue")
+    if usage is not None and current is not None:
+        remaining = max(float(usage) - float(current), 0.0)
+        used_pct = _quota_used_percent(limit)
+        remaining_pct = max(0.0, min(100.0, 100.0 - used_pct)) if used_pct is not None else None
+        return remaining, remaining_pct
+
+    used_pct = _quota_used_percent(limit)
+    if used_pct is not None:
+        return None, max(0.0, min(100.0, 100.0 - used_pct))
+    return None, None
+
+
+def _select_tokens_limit(limits: list[dict]) -> dict | None:
+    """Pick the most depleted TOKENS_LIMIT window (worst case for triage)."""
+    token_limits = [item for item in limits if item.get("type") == "TOKENS_LIMIT"]
+    if not token_limits:
+        return None
+
+    def remaining_pct(item: dict) -> float:
+        _remaining, pct = _quota_limit_remaining(item)
+        return pct if pct is not None else 100.0
+
+    return min(token_limits, key=remaining_pct)
+
+
+def _quota_response_ok(data: dict) -> bool:
+    if data.get("success") is True:
+        return isinstance(data.get("data"), dict)
+    return data.get("code") == 200 and isinstance(data.get("data"), dict)
+
+
+def parse_zhipu_quota(data: dict) -> dict:
+    """Parse Coding Plan quota from the monitor endpoint."""
+    if not _quota_response_ok(data):
+        return {"valid": False, "provider": "zhipu", "reason": "quota_unavailable"}
+
+    payload = data.get("data") or {}
+    limits = payload.get("limits") or []
+    if not limits:
+        return {"valid": False, "provider": "zhipu", "reason": "quota_unavailable"}
+
+    tokens_limit = _select_tokens_limit(limits)
+    if not tokens_limit:
+        return {"valid": False, "provider": "zhipu", "reason": "quota_unavailable"}
+
+    remaining, remaining_pct = _quota_limit_remaining(tokens_limit)
+    used_pct = _quota_used_percent(tokens_limit)
+    plan = payload.get("level", "coding-plan")
+    note = f"Coding Plan ({plan})"
+    if remaining is None and remaining_pct is not None:
+        note = f"Coding Plan ({plan}, ~{remaining_pct:.0f}% tokens remaining)"
+    return {
+        "valid": True,
+        "provider": "zhipu",
+        "total_balance": remaining if remaining is not None else 0.0,
+        "balance_details": limits,
+        "primary_currency": "TOKENS",
+        "balance_unavailable": False,
+        "balance_kind": "quota",
+        "provider_note": note,
+        "quota_plan": plan,
+        "quota_remaining_pct": remaining_pct,
+        "quota_used_pct": used_pct,
     }
 
 
@@ -167,14 +270,66 @@ def format_balance_log(result: dict, usd_cny_rate: float = DEFAULT_USD_CNY_RATE)
     if not result.get("valid"):
         return result.get("reason", "?")
 
+    if result.get("balance_kind") == "quota":
+        remaining = result.get("total_balance", 0.0)
+        plan = result.get("quota_plan", result.get("provider_note", "Coding Plan"))
+        if remaining > 0:
+            if remaining >= 1_000_000:
+                amount = f"{remaining / 1_000_000:.1f}M"
+            elif remaining >= 1_000:
+                amount = f"{remaining / 1_000:.1f}K"
+            else:
+                amount = f"{remaining:.0f}"
+            return f"quota {amount} tokens remaining ({plan})"
+        pct = result.get("quota_remaining_pct")
+        if pct is not None:
+            return f"quota ~{pct:.0f}% tokens remaining ({plan})"
+        return f"quota active ({plan})"
+
     if result.get("balance_unavailable"):
-        return "valid (balance N/A)"
+        return "valid (pay-as-you-go, balance N/A)"
 
     primary_currency = result.get("primary_currency", "CNY")
     total_balance = result.get("total_balance", 0.0)
     usd_eq = convert_to_usd(total_balance, primary_currency, usd_cny_rate)
     cny_eq = convert_to_cny(total_balance, primary_currency, usd_cny_rate)
     return f"{primary_currency} {total_balance:.4f} (≈${usd_eq:.2f} / ¥{cny_eq:.2f})"
+
+
+def format_balance_display(result: dict) -> str:
+    """Human-readable balance cell for CSV/MD export."""
+    balance = result.get("balance", 0.0)
+    if result.get("balance_kind") == "quota":
+        if balance > 0:
+            if balance >= 1_000_000:
+                amount = f"{balance / 1_000_000:.1f}M"
+            elif balance >= 1_000:
+                amount = f"{balance / 1_000:.1f}K"
+            else:
+                amount = f"{balance:.0f}"
+            return f"TOKENS {amount}"
+        pct = result.get("quota_remaining_pct")
+        if pct is not None:
+            return f"TOKENS ~{pct:.0f}%"
+        return "TOKENS active"
+    if result.get("balance_unavailable"):
+        return "N/A"
+    currency = result.get("primary_currency", "CNY")
+    return f"{currency} {balance:.4f}"
+
+
+def format_money_display(result: dict, field: str) -> str:
+    """USD/CNY column for exports; quota and unavailable keys are not cash balances."""
+    if result.get("balance_unavailable") or result.get("balance_kind") == "quota":
+        return "N/A"
+    value = result.get(field)
+    if value is None:
+        return "N/A"
+    if field == "balance_usd":
+        return f"${float(value):.2f}"
+    if field == "balance_cny":
+        return f"¥{float(value):.2f}"
+    return str(value)
 
 
 def load_queries(path: str = "queries_v4.txt") -> list[str]:
@@ -201,6 +356,7 @@ class ScannerEngine:
         max_valid_keys: int = 0,
         output_dir: str = "results",
         usd_cny_rate: float = DEFAULT_USD_CNY_RATE,
+        check_balance: bool = True,
         progress_callback: Callable[[int, int, str], None] | None = None,
         sources: list[str] | None = None,
         auto_disclose: bool | None = None,
@@ -218,6 +374,7 @@ class ScannerEngine:
         self.max_valid_keys = max_valid_keys
         self.output_dir = output_dir
         self.usd_cny_rate = usd_cny_rate
+        self.check_balance = check_balance
         self.progress_callback = progress_callback or (lambda *_args: None)
         self.sources = list(sources) if sources else list(DEFAULT_SOURCES)
         self._start_time = 0.0
@@ -333,6 +490,14 @@ class ScannerEngine:
                 concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages,
                 rate_limiter=self._rate_limiter,
             )
+        if source == "github_gist":
+            return GitHubGistScanner(concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages)
+        if source == "github_events":
+            return GitHubEventsScanner(
+                concurrency=self.concurrency,
+                timeout=self.timeout,
+                max_polls=max(1, self.scan_pages),
+            )
         return GitHubCodeScanner(
             concurrency=self.concurrency, timeout=self.timeout, pages=self.scan_pages,
             rate_limiter=self._rate_limiter,
@@ -341,6 +506,8 @@ class ScannerEngine:
     def _queries_for_source(self, source: str, code_queries: list[str]) -> list[str]:
         # Code search uses the rich filename:-qualified library; the commit/issue
         # search APIs only accept free text, so they get the keyword set.
+        if source in OPTIONAL_GITHUB_SOURCES:
+            return [""]
         return code_queries if source == "github_code" else KEYWORD_QUERIES
 
     async def _search_all(self, code_queries: list[str]) -> list[dict]:
@@ -352,10 +519,11 @@ class ScannerEngine:
             for idx, query in enumerate(queries, start=1):
                 if self._should_stop():
                     break
+                query_label = query or f"<{source}>"
                 if self._store.is_query_done(self._run_id, source, query):
-                    self.log(f"resume-skip [{source}] {query}")
+                    self.log(f"resume-skip [{source}] {query_label}")
                     continue
-                self.log(f"search [{source}] [{idx}/{len(queries)}] {query}")
+                self.log(f"search [{source}] [{idx}/{len(queries)}] {query_label}")
                 for row in await scanner.search(query):
                     self._store.record_finding(self._run_id, row)
                 self._store.mark_query_done(self._run_id, source, query)
@@ -380,8 +548,38 @@ class ScannerEngine:
             )
         return grouped
 
-    async def _request_verify(self, session: aiohttp.ClientSession, api_key: str, path: str) -> tuple[int, dict | None]:
-        url = f"{PROVIDER_CONFIG['base']}{path}"
+    @staticmethod
+    def group_keys_from_saved_results(records: list[dict], valid_only: bool = False) -> dict:
+        grouped: dict[str, dict] = {}
+        for record in records:
+            if valid_only and not record.get("valid"):
+                continue
+            key = record.get("key", "")
+            if is_bad_key(key):
+                continue
+            info = grouped.setdefault(key, {"repos": []})
+            seen = {(r.get("source"), r.get("repo"), r.get("file"), r.get("url")) for r in info["repos"]}
+            for repo in record.get("repos", []):
+                entry = {
+                    "source": repo.get("source", ""),
+                    "repo": repo.get("repo", ""),
+                    "file": repo.get("file", ""),
+                    "url": repo.get("url", ""),
+                }
+                key_tuple = (entry["source"], entry["repo"], entry["file"], entry["url"])
+                if key_tuple not in seen:
+                    info["repos"].append(entry)
+                    seen.add(key_tuple)
+        return grouped
+
+    async def _request_verify(
+        self,
+        session: aiohttp.ClientSession,
+        api_key: str,
+        path: str,
+        base: str | None = None,
+    ) -> tuple[int, dict | None]:
+        url = f"{base or PROVIDER_CONFIG['base']}{path}"
         headers = {"Authorization": f"Bearer {api_key}"}
         await self._verify_limiter.wait_if_blocked()
         try:
@@ -396,27 +594,48 @@ class ScannerEngine:
         except Exception as exc:
             return -2, {"error": str(exc)[:80]}
 
+    async def _verify_quota(self, session: aiohttp.ClientSession, api_key: str) -> dict | None:
+        last_probe = ""
+        for base in QUOTA_ENDPOINT_BASES:
+            qstatus, qdata = await self._request_verify(session, api_key, QUOTA_PATH, base=base)
+            last_probe = f"{base}{QUOTA_PATH} HTTP_{qstatus}"
+            if qstatus == 200 and isinstance(qdata, dict):
+                quota_result = parse_zhipu_quota(qdata)
+                if quota_result.get("valid"):
+                    return quota_result
+        return {"balance_probe": last_probe} if last_probe else None
+
     async def _verify_one(self, session: aiohttp.ClientSession, api_key: str, semaphore: asyncio.Semaphore) -> dict:
-        # Liveness check ONLY. We authenticate just enough (a read-only models
-        # list) to confirm the key is active, so its owner can be notified — see
-        # disclosure.py. We deliberately do NOT call /user/balance or any billing
-        # endpoint: responsible disclosure must never inspect a third party's
-        # account, credit, or billing state using their exposed credential.
         async with semaphore:
-            status, data = await self._request_verify(session, api_key, PROVIDER_CONFIG["verify_url"])
-            if status == 200 and isinstance(data, dict):
-                return parse_zhipu_models_response(data)
-            if status == 401:
-                return {"valid": False, "provider": "zhipu", "reason": "invalid_key"}
-            if status == 429:
-                return {"valid": False, "provider": "zhipu", "reason": "rate_limited"}
-            if status == 402:
-                return {"valid": False, "provider": "zhipu", "reason": "insufficient_balance"}
-            if status == -1:
-                return {"valid": False, "provider": "zhipu", "reason": "timeout"}
-            if status == -2 and isinstance(data, dict):
-                return {"valid": False, "provider": "zhipu", "reason": data.get("error", "request_error")}
-            return {"valid": False, "provider": "zhipu", "reason": f"HTTP_{status}"}
+            models_result = await self._verify_models_only(session, api_key)
+            if not models_result.get("valid") or not self.check_balance:
+                return models_result
+
+            quota_result = await self._verify_quota(session, api_key)
+            if isinstance(quota_result, dict) and quota_result.get("valid"):
+                return quota_result
+
+            models_result = dict(models_result)
+            models_result["provider_note"] = "Pay-as-you-go (cash balance not exposed via API)"
+            if isinstance(quota_result, dict) and quota_result.get("balance_probe"):
+                models_result["balance_probe"] = quota_result["balance_probe"]
+            return models_result
+
+    async def _verify_models_only(self, session: aiohttp.ClientSession, api_key: str) -> dict:
+        status, data = await self._request_verify(session, api_key, PROVIDER_CONFIG["verify_url"])
+        if status == 200 and isinstance(data, dict):
+            return parse_zhipu_models_response(data)
+        if status == 401:
+            return {"valid": False, "provider": "zhipu", "reason": "invalid_key"}
+        if status == 429:
+            return {"valid": False, "provider": "zhipu", "reason": "rate_limited"}
+        if status == 402:
+            return {"valid": False, "provider": "zhipu", "reason": "insufficient_balance"}
+        if status == -1:
+            return {"valid": False, "provider": "zhipu", "reason": "timeout"}
+        if status == -2 and isinstance(data, dict):
+            return {"valid": False, "provider": "zhipu", "reason": data.get("error", "request_error")}
+        return {"valid": False, "provider": "zhipu", "reason": f"HTTP_{status}"}
 
     def _maybe_disclose(self, key: str, info: dict, result: dict) -> None:
         """Open a responsible-disclosure issue for one live key (best-effort).
@@ -443,6 +662,14 @@ class ScannerEngine:
     def _result_row(self, key: str, info: dict, result: dict) -> dict:
         total_balance = result.get("total_balance", 0.0)
         primary_currency = result.get("primary_currency", "CNY")
+        balance_unavailable = result.get("balance_unavailable", False)
+        balance_kind = result.get("balance_kind", "cash" if not balance_unavailable else "")
+        if balance_kind == "quota" or balance_unavailable:
+            balance_usd = None
+            balance_cny = None
+        else:
+            balance_usd = convert_to_usd(total_balance, primary_currency, self.usd_cny_rate)
+            balance_cny = convert_to_cny(total_balance, primary_currency, self.usd_cny_rate)
         return {
             "key": key,
             "key_redacted": redact_key(key),
@@ -450,12 +677,17 @@ class ScannerEngine:
             "balance": total_balance,
             "balance_details": result.get("balance_details", []),
             "primary_currency": primary_currency,
-            "balance_usd": convert_to_usd(total_balance, primary_currency, self.usd_cny_rate),
-            "balance_cny": convert_to_cny(total_balance, primary_currency, self.usd_cny_rate),
-            "balance_unavailable": result.get("balance_unavailable", False),
+            "balance_usd": balance_usd,
+            "balance_cny": balance_cny,
+            "balance_kind": balance_kind,
+            "balance_unavailable": balance_unavailable,
             "reason": result.get("reason", ""),
             "provider": result.get("provider", "zhipu"),
             "provider_note": result.get("provider_note", ""),
+            "quota_plan": result.get("quota_plan", ""),
+            "quota_remaining_pct": result.get("quota_remaining_pct"),
+            "quota_used_pct": result.get("quota_used_pct"),
+            "balance_probe": result.get("balance_probe", ""),
             "repos": info["repos"],
             "verified_at": datetime.now().isoformat(),
         }
@@ -549,13 +781,15 @@ class ScannerEngine:
                 writer = csv.writer(handle)
                 writer.writerow(
                     [
-                        "key_redacted",
+                        "key",
                         "valid",
                         "balance",
                         "currency",
+                        "balance_kind",
                         "balance_usd",
                         "balance_cny",
                         "provider",
+                        "provider_note",
                         "reason",
                         "locations",
                         "verified_at",
@@ -564,13 +798,15 @@ class ScannerEngine:
                 for result in sorted_results:
                     writer.writerow(
                         [
-                            result.get("key_redacted", redact_key(result.get("key", ""))),
+                            result.get("key", ""),
                             result.get("valid", False),
-                            result.get("balance", 0),
+                            format_balance_display(result),
                             result.get("primary_currency", ""),
-                            result.get("balance_usd", 0),
-                            result.get("balance_cny", 0),
+                            result.get("balance_kind", ""),
+                            format_money_display(result, "balance_usd"),
+                            format_money_display(result, "balance_cny"),
                             result.get("provider", ""),
+                            result.get("provider_note", ""),
                             result.get("reason", ""),
                             len(result.get("repos", [])),
                             result.get("verified_at", ""),
@@ -581,25 +817,39 @@ class ScannerEngine:
             path = os.path.join(self.output_dir, f"{RESULT_BASENAME}.md")
             with open(path, "w", encoding="utf-8") as handle:
                 valid = [item for item in sorted_results if item.get("valid")]
-                positive = [item for item in valid if item.get("balance_usd", 0) > 0]
-                total_usd = sum(item.get("balance_usd", 0) for item in positive)
-                total_cny = sum(item.get("balance_cny", 0) for item in positive)
+                cash_keys = [item for item in valid if item.get("balance_kind") == "cash"]
+                quota_keys = [item for item in valid if item.get("balance_kind") == "quota"]
+                positive_cash = [item for item in cash_keys if item.get("balance_usd", 0) > 0]
+                positive_quota = [
+                    item
+                    for item in quota_keys
+                    if item.get("balance", 0) > 0 or item.get("quota_remaining_pct") is not None
+                ]
+                unavailable = [item for item in valid if item.get("balance_unavailable")]
+                total_usd = sum(item.get("balance_usd", 0) or 0 for item in positive_cash)
+                total_cny = sum(item.get("balance_cny", 0) or 0 for item in positive_cash)
                 handle.write("# ZhipuGLM Hunter Results\n\n")
                 handle.write(f"- Total candidate keys: {len(sorted_results)}\n")
                 handle.write(f"- Valid keys: {len(valid)}\n")
-                handle.write(f"- Positive balance: {len(positive)}\n")
-                handle.write(f"- Total balance: ${total_usd:.2f} / ¥{total_cny:.2f}\n\n")
+                handle.write(f"- Cash balance keys: {len(cash_keys)}\n")
+                handle.write(f"- Coding Plan quota keys: {len(quota_keys)}\n")
+                handle.write(f"- Positive cash balance: {len(positive_cash)}\n")
+                if positive_cash:
+                    handle.write(f"- Total cash balance: ${total_usd:.2f} / ¥{total_cny:.2f}\n")
+                else:
+                    handle.write("- Total cash balance: N/A (no cash-balance API for pay-as-you-go keys)\n")
+                handle.write(f"- Quota keys with quota data: {len(positive_quota)}\n")
+                handle.write(f"- Pay-as-you-go (balance unavailable via API): {len(unavailable)}\n\n")
                 handle.write("| Key | Valid | Balance | USD | CNY | Provider | Locations | Reason |\n")
                 handle.write("| --- | --- | ---: | ---: | ---: | --- | ---: | --- |\n")
                 for result in sorted_results:
-                    currency = result.get("primary_currency", "CNY")
-                    balance = result.get("balance", 0)
+                    balance_display = format_balance_display(result)
                     handle.write(
                         f"| {result.get('key_redacted', redact_key(result.get('key', '')))} "
                         f"| {result.get('valid', False)} "
-                        f"| {currency} {balance:.4f} "
-                        f"| ${result.get('balance_usd', 0):.2f} "
-                        f"| ¥{result.get('balance_cny', 0):.2f} "
+                        f"| {balance_display} "
+                        f"| {format_money_display(result, 'balance_usd')} "
+                        f"| {format_money_display(result, 'balance_cny')} "
                         f"| {result.get('provider', '')} "
                         f"| {len(result.get('repos', []))} "
                         f"| {result.get('reason', '') or result.get('provider_note', '')} |\n"
@@ -609,6 +859,9 @@ class ScannerEngine:
 
 
 __all__ = [
+    "ALL_GITHUB_SOURCES",
+    "DEFAULT_SOURCES",
+    "OPTIONAL_GITHUB_SOURCES",
     "BUILTIN_QUERIES",
     "BALANCE_PATH",
     "DEFAULT_USD_CNY_RATE",
@@ -620,10 +873,14 @@ __all__ = [
     "convert_to_cny",
     "convert_to_usd",
     "extract_keys",
+    "format_balance_display",
     "format_balance_log",
+    "format_money_display",
+    "QUOTA_ENDPOINT_BASES",
     "is_bad_key",
     "load_queries",
     "parse_zhipu_balance",
     "parse_zhipu_models_response",
+    "parse_zhipu_quota",
     "redact_key",
 ]

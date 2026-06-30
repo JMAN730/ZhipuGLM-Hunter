@@ -3,11 +3,11 @@
 > **"The universe is a dark forest. Every civilization is an armed hunter."**
 > — Liu Cixin, *The Dark Forest*
 
-A scanner that hunts down exposed **Zhipu AI (智谱 / GLM)** API keys across GitHub, GitLab, HuggingFace, PyPI, npm, Docker Hub, and more — validates them, and checks their balance.
+A scanner that hunts down exposed **Zhipu AI (智谱 / GLM)** API keys across GitHub (code, commits, issues) — validates liveness, enriches Coding Plan keys with quota, optionally discloses to repo owners, and exports findings.
 
 **Inspired by:** [DarkForest-Hunter](https://github.com/chu0119/DarkForest-Hunter) (DeepSeek key scanner)
 
-**Status (2026-06-25):** Core MVP is working — GitHub Code Search, Zhipu key extraction, balance-aware verification, and JSON/CSV/Markdown export. Multi-platform scanners and marathon scripts are still planned.
+**Status (2026-06-27):** Core MVP complete — five GitHub scanners (code, commits, issues, optional gist/events), liveness + Coding Plan quota verification, optional responsible disclosure, JSON/CSV/Markdown export, and multiple scan entry points. Non-GitHub platforms (GitLab, PyPI, npm, etc.) are **deferred** — no repo-bound disclosure path per project policy.
 
 ---
 
@@ -17,9 +17,9 @@ A scanner that hunts down exposed **Zhipu AI (智谱 / GLM)** API keys across Gi
 |--------|------------------------------|-----------------|
 | **Key prefix** | `sk-[a-zA-Z0-9]{32,64}` | `[a-f0-9]{32}\.[A-Za-z0-9]+` |
 | **API base** | `https://api.deepseek.com` | `https://open.bigmodel.cn/api/paas/v4` |
-| **Validation endpoint** | `GET /user/balance` | `GET /user/balance` (primary), `GET /models` (fallback) |
-| **Balance check** | Yes (native endpoint) | Yes (`/user/balance`; models fallback when balance unavailable) |
-| **Verify log output** | `USD/CNY X.XXXX (≈$… / ¥…)` | Same format — balance shown instead of `LIVE` |
+| **Validation endpoint** | `GET /user/balance` | `GET /models` (liveness), then `GET /api/monitor/usage/quota/limit` (Coding Plan) |
+| **Balance check** | Yes (native endpoint) | Coding Plan quota via monitor endpoint; pay-as-you-go keys → `balance_unavailable` (`/user/balance` returns 404 on Zhipu) |
+| **Verify log output** | `USD/CNY X.XXXX (≈$… / ¥…)` | `quota … tokens remaining` · `valid (pay-as-you-go, balance N/A)` · or `invalid_key` |
 | **Search queries** | `deepseek sk-` patterns | `zhipu`, `bigmodel`, `chatglm`, `glm-4` patterns |
 | **Primary currency** | USD/CNY | CNY (native) |
 
@@ -29,39 +29,51 @@ A scanner that hunts down exposed **Zhipu AI (智谱 / GLM)** API keys across Gi
 
 ```
 ZhipuGLM-Hunter/
-├── scanner_engine.py          # Core engine (search + verify + balance + save) ✅
+├── scanner_engine.py          # Core engine (search + verify + quota + save) ✅
+├── disclosure.py              # Responsible-disclosure GitHub issues ✅
 ├── scanners/                  # Platform scanners
 │   ├── __init__.py            ✅
 │   ├── base.py                # Key extraction + helpers ✅
 │   ├── github_code.py         # GitHub Code Search ✅
-│   ├── github_gist.py         # GitHub Gist 🔜
-│   ├── github_issues.py       # GitHub Issues/PRs 🔜
-│   ├── github_commits.py      # GitHub Commit history 🔜
-│   ├── github_events.py       # Real-time PushEvent stream 🔜
-│   ├── gitlab.py              # GitLab 🔜
-│   ├── gitee.py               # Gitee (码云) 🔜
-│   ├── huggingface.py         # HuggingFace Models/Datasets/Spaces 🔜
-│   ├── pypi.py                # PyPI packages 🔜
-│   ├── npm_registry.py        # npm registry 🔜
-│   ├── stackoverflow.py       # Stack Overflow 🔜
-│   ├── docker.py              # Docker Hub 🔜
-│   ├── commoncrawl.py         # Common Crawl archives 🔜
-│   └── wayback.py             # Wayback Machine 🔜
-├── tests/                     # Network-free unit tests ✅
+│   ├── github_commits.py      # GitHub Commit history ✅
+│   ├── github_issues.py       # GitHub Issues/PRs ✅
+│   ├── github_gist.py         # GitHub Gist (optional source) ✅
+│   ├── github_events.py       # Real-time PushEvent stream (optional) ✅
+│   ├── gitlab.py              # GitLab ⏸️ deferred (no disclosure path)
+│   ├── gitee.py               # Gitee (码云) ⏸️ deferred
+│   ├── huggingface.py         # HuggingFace Models/Datasets/Spaces ⏸️ deferred
+│   ├── pypi.py                # PyPI packages ⏸️ deferred
+│   ├── npm_registry.py        # npm registry ⏸️ deferred
+│   ├── stackoverflow.py       # Stack Overflow ⏸️ deferred
+│   ├── docker.py              # Docker Hub ⏸️ deferred
+│   ├── commoncrawl.py         # Common Crawl archives ⏸️ deferred
+│   └── wayback.py             # Wayback Machine ⏸️ deferred
+├── tests/                     # Network-free unit tests ✅ (67 passing)
 │   ├── test_engine_pure.py
-│   └── test_base_helpers.py
-├── queries_v4.txt             # Search query library (~200+ patterns) ✅
+│   ├── test_base_helpers.py
+│   ├── test_engine_sources.py
+│   ├── test_scanners_github.py
+│   ├── test_disclosure.py
+│   ├── test_verify_balances.py
+│   └── test_probe_spend.py
+├── queries_v4.txt             # Search query library (~258 patterns) ✅
 ├── quick_batch.py             # Quick bounded test scan ✅
 ├── deep_scan.py               # Configurable deep scan ✅
 ├── ultimate_scan.py           # Long-running MVP scan ✅
-├── marathon_scan.py           # Long-running cyclic scan 🔜
+├── marathon_scan.py           # Continuous cyclic scan ✅
+├── expanded_scan.py           # High-yield queries + optional gist ✅
+├── max_scan.py                # Full library, deep pagination ✅
+├── zhipu_key_scanner.py       # Unified CLI wrapper ✅
+├── verify_balances.py         # Re-check saved keys (liveness + quota) ✅
+├── probe_spend.py             # 1-token spend probe (manual triage) ✅
 ├── pyproject.toml             # Package + dev deps ✅
 ├── requirements.txt           # Runtime deps ✅
 ├── results/                   # Output directory
 │   └── .gitkeep
 ├── README.md                  # English readme ✅
-├── README_CN.md               # Chinese readme 🔜
-├── USAGE.md                   # Detailed usage guide 🔜
+├── USAGE.md                   # Detailed usage guide ✅
+├── README_CN.md               # Chinese readme ✅
+├── cmd_generator.html         # Scan command GUI ✅
 ├── LICENSE                    # MIT ✅
 ├── .gitignore                 ✅
 └── PLAN.md                    # This file
@@ -234,46 +246,13 @@ open.bigmodel.cn/api/paas/v4
 
 ---
 
-## ✅ Validation & Balance
+## ✅ Validation & Quota
 
-Verification is **balance-first**, matching the DarkForest-Hunter UX: valid keys log their balance instead of `LIVE`.
+Verification is **liveness-first**, then optional **Coding Plan quota** enrichment when `check_balance` is enabled (default in scan scripts). Results are sorted **valid-first** (not by `balance_usd`) — the tool triages who to notify, not which credential is most valuable.
 
-### Primary: Account Balance
+### Step 1: Liveness (Models List)
 
-```bash
-GET https://open.bigmodel.cn/api/paas/v4/user/balance
-Authorization: Bearer {api_key}
-```
-
-**Responses:**
-- `200` + `balance_infos` → Valid key; parse cash balance (CNY/USD buckets)
-- `401` → Invalid key
-- `402` → Insufficient balance
-- `429` → Rate limited
-
-**Example response shape** (same family as DeepSeek):
-
-```json
-{
-  "balance_infos": [
-    {
-      "currency": "CNY",
-      "total_balance": "12.50",
-      "granted_balance": "2.50",
-      "tipped_balance": "0"
-    }
-  ]
-}
-```
-
-**Engine behavior:**
-- Parses `balance_infos` into `balance`, `balance_usd`, `balance_cny`, and `balance_details`
-- Logs: `verify a1b2… -> CNY 12.5000 (≈$1.72 / ¥12.50)`
-- Sorts results by `balance_usd` descending
-
-### Fallback: Models List (Auth Check)
-
-Used when `/user/balance` does not return a parseable balance payload (e.g. some Coding Plan keys).
+Every candidate key is authenticated with a cheap model-list probe:
 
 ```bash
 GET https://open.bigmodel.cn/api/paas/v4/models
@@ -281,26 +260,75 @@ Authorization: Bearer {api_key}
 ```
 
 **Responses:**
-- `200` → Valid key (returns available models list); `balance_unavailable: true`
+- `200` + model list → Valid key; proceed to quota probe (if enabled)
 - `401` → Invalid key
+- `402` → Insufficient balance
 - `429` → Rate limited
 
 **Engine behavior:**
-- Logs: `verify a1b2… -> valid (balance N/A)`
-- Key is still marked `valid: true` in exports
+- Invalid keys stop here with `reason: invalid_key` (etc.)
+- Valid keys continue to Step 2 when balance/quota checks are enabled
 
-### Optional Future: Coding Plan Quota
+### Step 2: Coding Plan Quota (Implemented)
 
-Not implemented yet. Community tools use an unofficial monitor endpoint for subscription quota (tokens/sessions), not cash balance:
+For live keys, the engine probes the unofficial monitor endpoint across three bases (first `200` with parseable quota wins):
 
 ```bash
 GET https://open.bigmodel.cn/api/monitor/usage/quota/limit
+GET https://bigmodel.cn/api/monitor/usage/quota/limit
+GET https://api.z.ai/api/monitor/usage/quota/limit
 Authorization: Bearer {api_key}
 ```
 
-This may be added later for Coding Plan keys that return no cash balance on `/user/balance`.
+**Responses:**
+- `200` + `success: true` + `TOKENS_LIMIT` in `data.limits` → Valid Coding Plan key; parse remaining tokens / percent
+- Other statuses or missing quota payload → Fall through to pay-as-you-go classification
 
-### Not Used (Smoke Test Only)
+**Engine behavior:**
+- Logs: `verify a1b2… -> quota 1.2M tokens remaining (Coding Plan (…))`
+- Export fields: `balance_kind: quota`, `primary_currency: TOKENS`, `provider_note`, `quota_plan`, `quota_remaining_pct`
+
+### Pay-as-you-go Keys
+
+When liveness succeeds but no Coding Plan quota is returned, the key is marked live with cash balance unavailable:
+
+- `balance_unavailable: true`
+- `provider_note: Pay-as-you-go (cash balance not exposed via API)`
+- Logs: `verify a1b2… -> valid (pay-as-you-go, balance N/A)`
+- Markdown export shows balance column as `N/A`
+
+### Not Used: `/user/balance`
+
+Zhipu’s `GET /user/balance` returns **404** — it is **not** called during scans. The `parse_zhipu_balance()` helper remains in `scanner_engine.py` for unit tests and backward compatibility only.
+
+```bash
+GET https://open.bigmodel.cn/api/paas/v4/user/balance   # 404 on Zhipu — do not use
+Authorization: Bearer {api_key}
+```
+
+### Export Sensitivity
+
+| Format | Key column |
+|--------|------------|
+| JSON | Full key (local-only; `results/` is gitignored) |
+| CSV | Full key |
+| Markdown | Redacted (`key_redacted` / `redact_key()`) |
+
+Verify logs always use redacted keys regardless of export format.
+
+### Optional: Re-verify Saved Keys
+
+`verify_balances.py` re-runs liveness + quota against an existing `zhipu_keys_result.json` or a newline-delimited keys file. Pass `--no-balance` for liveness-only (`/models`).
+
+### Spend Probe: `probe_spend.py` (Implemented)
+
+Sends a **1-token** chat completion to test whether a key can actually consume quota/balance. This is the only probe that confirms spendability for pay-as-you-go keys (costs ~1 token per success).
+
+```bash
+.venv/bin/python probe_spend.py YOUR_API_KEY
+.venv/bin/python probe_spend.py results/zhipu_keys_result.json --valid-only --limit 5
+.venv/bin/python probe_spend.py --keys-file keys.txt --output results/spend_probe.json
+```
 
 ```bash
 POST https://open.bigmodel.cn/api/paas/v4/chat/completions
@@ -309,9 +337,14 @@ Content-Type: application/json
 Body: {"model":"glm-4-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":1}
 ```
 
-- `200` → Valid key + working billing (costs tokens; avoid in scanner)
+- `200` → Valid key + can spend (probe succeeded)
 - `401` → Invalid key
-- `429/402` → Rate limited / insufficient balance
+- `402` → Live key but insufficient balance/quota
+- `429` → Rate limited
+
+Also tries `https://api.z.ai/api/paas/v4/chat/completions` as fallback. **Not run during scans** — use manually for triage only.
+
+### Not Used (Legacy)
 
 ---
 
@@ -322,28 +355,32 @@ Body: {"model":"glm-4-flash","messages":[{"role":"user","content":"hi"}],"max_to
 - [x] Fork/adapt `scanner_engine.py`
   - [x] Change `KEY_PATTERN` → Zhipu key regex
   - [x] Change API base → `https://open.bigmodel.cn/api/paas/v4`
-  - [x] Rewrite `_verify_one()` → balance-first (`/user/balance`, `/models` fallback)
-  - [x] Rewrite balance parsing → Zhipu `balance_infos` response format
+  - [x] Rewrite `_verify_one()` → liveness-first (`GET /models`), then Coding Plan quota
+  - [x] Implement `parse_zhipu_quota()` for monitor endpoint (open.bigmodel.cn, bigmodel.cn, api.z.ai)
+  - [x] Keep `parse_zhipu_balance()` as test-only helper (`/user/balance` returns 404 on Zhipu)
   - [x] Replace all `BUILTIN_QUERIES` → Zhipu-specific queries
-  - [x] Update currency handling (CNY native, USD/CNY conversion)
+  - [x] Update currency handling (CNY native, USD/CNY conversion for legacy cash parse)
   - [x] Update output naming (`zhipu_keys_result.json` etc.)
   - [x] Update all references from "deepseek" → "zhipu"
-  - [x] Show balance in verify logs and export (JSON/CSV/Markdown)
+  - [x] Sort results valid-first (not by `balance_usd`)
+  - [x] Export: JSON/CSV full keys; Markdown redacted keys
 
 ### Phase 2: Scanners (Day 1-2)
 
-- [ ] Copy all 14 scanners from DarkForest-Hunter
+- [x] Implement optional GitHub scanners: `github_gist`, `github_events` (opt-in via `--sources`)
 - [x] Create `scanners/base.py` → Zhipu key pattern in `extract_keys()`
 - [x] Implement `scanners/github_code.py`
-- [ ] Update scanner search parameters for remaining platforms
-- [ ] Test each scanner individually
+- [x] Implement `scanners/github_commits.py`
+- [x] Implement `scanners/github_issues.py`
+- [ ] ~~Copy remaining scanners from DarkForest-Hunter (GitLab, HuggingFace, etc.)~~ **Deferred** — no repo-bound disclosure path; see README
+- [ ] ~~Test each remaining scanner individually~~ N/A until non-GitHub platforms are in scope
 
 ### Phase 3: Search Queries (Day 2)
 
-- [x] Create `queries_v4.txt` with Zhipu-specific queries
-- [ ] Expand to 200+ patterns
-- [ ] Test query yield rates
-- [ ] Tune query ordering by yield
+- [x] Create `queries_v4.txt` with Zhipu-specific queries (~258 patterns)
+- [x] Expand to 200+ patterns
+- [ ] Test query yield rates (operational tuning)
+- [ ] Tune query ordering by yield (operational tuning)
 - [ ] Add Chinese-language queries (GitHub supports Unicode search)
 
 ### Phase 4: Scan Scripts (Day 2)
@@ -351,22 +388,25 @@ Body: {"model":"glm-4-flash","messages":[{"role":"user","content":"hi"}],"max_to
 - [x] Rewrite `ultimate_scan.py` for Zhipu
 - [x] Rewrite `quick_batch.py`
 - [x] Rewrite `deep_scan.py`
-- [ ] Rewrite `marathon_scan.py`
-- [ ] Rewrite `expanded_scan.py`
-- [ ] Rewrite `max_scan.py`
-- [ ] Rewrite `deepseek_key_scanner.py` → `zhipu_key_scanner.py`
+- [x] Rewrite `marathon_scan.py`
+- [x] Add `verify_balances.py` (re-check saved JSON or keys file)
+- [x] Add `probe_spend.py` (1-token spend probe, manual triage)
+- [x] Rewrite `expanded_scan.py`
+- [x] Rewrite `max_scan.py`
+- [x] Rewrite `deepseek_key_scanner.py` → `zhipu_key_scanner.py`
 
 ### Phase 5: Documentation & Polish (Day 3)
 
 - [x] Write `README.md` (English)
-- [ ] Write `README_CN.md` (Chinese)
-- [ ] Write `USAGE.md`
-- [ ] Create `cmd_generator.html` GUI
+- [x] Write `USAGE.md`
+- [x] Implement `disclosure.py` (responsible-disclosure GitHub issues; dry-run by default)
+- [x] Write `README_CN.md` (Chinese)
+- [x] Create `cmd_generator.html` GUI
 - [x] Add `.gitignore`
 - [x] Add `LICENSE` (MIT)
-- [x] Add `tests/` with network-free coverage
-- [ ] Test full multi-platform scan end-to-end
-- [ ] Tag v1.0.0 release
+- [x] Add `tests/` with network-free coverage (67 tests passing)
+- [x] Test GitHub multi-source scan wiring (unit tests; E2E optional)
+- [ ] Tag v1.0.0 release (manual git tag when ready)
 
 ---
 
@@ -388,9 +428,15 @@ gh auth login
 
 # Long-running MVP scan
 .venv/bin/python ultimate_scan.py
+
+# Continuous cyclic scan (optional disclosure)
+.venv/bin/python marathon_scan.py --interval-minutes 30 --disclose
+
+# Re-check liveness + quota on saved results
+.venv/bin/python verify_balances.py results/zhipu_keys_result.json
 ```
 
-Results are written to `results/zhipu_keys_result.{json,csv,md}` with balance columns when available.
+Results are written to `results/zhipu_keys_result.{json,csv,md}`. JSON and CSV contain **full keys**; Markdown redacts them. Quota and pay-as-you-go status appear in balance columns when available.
 
 ---
 
@@ -408,13 +454,20 @@ Results are written to `results/zhipu_keys_result.{json,csv,md}` with balance co
 
 | Metric | Target | MVP Status |
 |--------|--------|------------|
-| Search patterns | 200+ | `queries_v4.txt` seeded; expansion pending |
-| Platforms scanned | 14 | 1 (GitHub Code) |
-| Balance display | Yes | ✅ `/user/balance` + models fallback |
+| Search patterns | 200+ | ✅ ~258 in `queries_v4.txt` |
+| GitHub sources | 5 (code · commits · issues · gist · events) | ✅ 3 default + 2 optional |
+| Other platforms | 14 (DarkForest parity) | ⏸️ Deferred — no disclosure channel |
+| Verification | Liveness + quota enrichment | ✅ `GET /models` then Coding Plan quota probe |
+| Cash balance via API | Nice-to-have | ❌ `/user/balance` returns 404; pay-as-you-go → `balance_unavailable` |
+| Responsible disclosure | Optional per-repo issues | ✅ `disclosure.py` + `--disclose` / `--disclose-send` |
+| Re-verify utility | Re-check saved keys | ✅ `verify_balances.py` |
+| Unit tests | Network-free coverage | ✅ 67 tests passing |
+| Result sort order | Valid-first triage | ✅ Not ranked by `balance_usd` |
+| Export redaction | JSON/CSV full keys; MD redacted | ✅ JSON/CSV local-only; MD uses masked keys |
 | Scan speed | 30-50 keys/minute (concurrent verify) | TBD |
 | False positive rate | <5% (strict key regex) | TBD |
 | Key format accuracy | Match all valid Zhipu key formats | ✅ Regex in `scanners/base.py` |
 
 ---
 
-*Plan created: 2026-05-22 · Last updated: 2026-06-25 (balance-first verification)*
+*Plan created: 2026-05-22 · Last updated: 2026-06-27 (Phase 2–5 complete; non-GitHub platforms deferred)*
